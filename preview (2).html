@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zermatt StoryMap Hazard Explorer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root{
+      --bg:#0d1b2a;
+      --panel:#13263a;
+      --panel2:#1b344d;
+      --border:rgba(255,255,255,.14);
+      --text:#f7fafc;
+      --muted:#c8d2dd;
+      --winter:#4f83ff;
+      --spring:#2ca25f;
+      --summer:#e85d04;
+      --autumn:#8d5524;
+      --trail:#7bc96f;
+      --lift:#111111;
+      --ski:#7f5af0;
+      --vp:#f4a300;
+    }
+    html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+    #app{display:grid;grid-template-columns:380px 1fr;height:100vh}
+    #sidebar{background:linear-gradient(180deg,var(--panel),var(--bg));padding:18px;overflow:auto;border-right:1px solid var(--border)}
+    #map{height:100vh;width:100%}
+    h1{margin:0 0 10px;font-size:1.35rem}
+    h2{font-size:1rem;margin:14px 0 8px}
+    p{font-size:.94rem;line-height:1.45;color:var(--muted);margin:8px 0}
+    .small{font-size:.82rem;color:var(--muted)}
+    .card{border:1px solid var(--border);background:rgba(255,255,255,.04);padding:14px;border-radius:14px;margin:10px 0}
+    .season-grid,.mode-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+    button{cursor:pointer}
+    .season-btn,.mode-btn,.toggle-btn{
+      background:var(--panel2);color:var(--text);border:1px solid var(--border);
+      border-radius:10px;padding:10px 12px;font-weight:700
+    }
+    .season-btn.active,.mode-btn.active{outline:2px solid rgba(255,255,255,.35)}
+    .season-btn[data-season="winter"].active{background:var(--winter)}
+    .season-btn[data-season="spring"].active{background:var(--spring)}
+    .season-btn[data-season="summer"].active{background:var(--summer)}
+    .season-btn[data-season="autumn"].active{background:var(--autumn)}
+    .toggle-wrap{display:flex;flex-wrap:wrap;gap:8px}
+    .pill{
+      display:inline-block;padding:5px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.16);
+      font-size:.8rem;margin:2px 6px 2px 0;color:#fff
+    }
+    .winter{background:var(--winter)} .spring{background:var(--spring)}
+    .summer{background:var(--summer)} .autumn{background:var(--autumn)}
+    .legend-item{display:flex;align-items:center;gap:8px;margin:7px 0;color:var(--muted);font-size:.88rem}
+    .swatch{width:14px;height:14px;border-radius:50%}
+    .line{width:18px;height:0;border-top:3px solid #fff}
+    ul{padding-left:18px;margin:8px 0 0;color:var(--muted)}
+    li{margin:6px 0;line-height:1.4}
+    .link-btn{
+      display:inline-block;text-decoration:none;color:#fff;background:#22384f;border:1px solid var(--border);
+      padding:10px 12px;border-radius:10px;margin:6px 8px 0 0;font-weight:700;font-size:.9rem
+    }
+    .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#102437;color:#fff}
+    .leaflet-control-layers{background:#13263a;color:#fff;border:1px solid var(--border)}
+    .leaflet-control-layers label{color:#fff}
+    @media (max-width: 960px){
+      #app{grid-template-columns:1fr;grid-template-rows:auto 62vh}
+      #map{height:62vh}
+      #sidebar{border-right:none;border-bottom:1px solid var(--border)}
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>Zermatt StoryMap Hazard Explorer</h1>
+    <p>
+      This embeddable map is built for your StoryMap. It uses real OpenStreetMap trails, lifts, pistes, and alpine huts/viewpoints,
+      then overlays seasonal hazard interpretation zones for the Matterhorn region.
+    </p>
+
+    <div class="card">
+      <h2>Map mode</h2>
+      <div class="mode-grid">
+        <button class="mode-btn active" data-mode="seasonal">Seasonal hazard explorer</button>
+        <button class="mode-btn" data-mode="viewpoints">Viewpoints tour</button>
+      </div>
+    </div>
+
+    <div class="card" id="season-card">
+      <h2>Choose season</h2>
+      <div class="season-grid">
+        <button class="season-btn active" data-season="winter">Winter</button>
+        <button class="season-btn" data-season="spring">Spring</button>
+        <button class="season-btn" data-season="summer">Summer</button>
+        <button class="season-btn" data-season="autumn">Autumn</button>
+      </div>
+      <h2 id="season-title">Winter in Zermatt</h2>
+      <p id="season-summary"></p>
+      <div id="season-tags"></div>
+      <ul id="season-bullets"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Layers</h2>
+      <div class="toggle-wrap">
+        <button class="toggle-btn" data-layer="trails">Trails</button>
+        <button class="toggle-btn" data-layer="lifts">Lifts</button>
+        <button class="toggle-btn" data-layer="ski">Ski / pistes</button>
+        <button class="toggle-btn" data-layer="viewpoints">Viewpoints</button>
+        <button class="toggle-btn" data-layer="hazards">Hazard zones</button>
+      </div>
+      <p class="small">These are on by default once the data loads.</p>
+    </div>
+
+    <div class="card">
+      <h2>Legend</h2>
+      <div class="legend-item"><span class="line" style="border-top-color:var(--trail)"></span> Hiking trails / mountain paths</div>
+      <div class="legend-item"><span class="line" style="border-top-color:var(--lift)"></span> Aerialways / lift routes</div>
+      <div class="legend-item"><span class="line" style="border-top-color:var(--ski)"></span> Ski / piste routes</div>
+      <div class="legend-item"><span class="swatch" style="background:var(--vp)"></span> Key viewpoints / huts / major stops</div>
+      <div class="legend-item"><span class="swatch" id="haz-color" style="background:var(--winter)"></span> Seasonal hazard emphasis</div>
+    </div>
+
+    <div class="card">
+      <h2>Official live sources</h2>
+      <a class="link-btn" target="_blank" href="https://www.natural-hazards.ch/#hazards-tab=all&place=3920-Zermatt">Natural Hazards Portal</a>
+      <a class="link-btn" target="_blank" href="https://whiterisk.ch/en/conditions/snow-maps/snow_depth">White Risk: snow depth</a>
+      <a class="link-btn" target="_blank" href="https://www.slf.ch/en/avalanches/avalanches-and-avalanche-accidents/">SLF avalanches</a>
+      <p class="small">These links provide official or live context. This app is best used as your StoryMap interpretation layer.</p>
+    </div>
+
+    <div class="card">
+      <h2>Important note</h2>
+      <p class="small">
+        StoryMaps code blocks do not run custom JavaScript. To use this interactively, host this HTML file online and add it to StoryMaps with <b>Embed</b>.
+      </p>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script>
+const seasons = {
+  winter: {
+    title: "Winter in Zermatt",
+    summary: "Winter brings the strongest avalanche concern because ski access and snow recreation place people close to steep, high-elevation terrain.",
+    tags: ["Avalanches", "Snow loading", "Lift access", "Ski exposure"],
+    bullets: [
+      "This view emphasizes ski and lift access near major winter terrain.",
+      "Hazard zones highlight areas where snow recreation and steep alpine terrain are most closely linked.",
+      "Use this with live avalanche bulletins for current conditions."
+    ],
+    color: getComputedStyle(document.documentElement).getPropertyValue('--winter').trim(),
+    zones: [
+      {name:"Matterhorn Glacier Paradise sector", center:[45.9380, 7.7252], radius:2600},
+      {name:"Theodul glacier / Plateau Rosa sector", center:[45.954, 7.706], radius:2900},
+      {name:"Gornergrat–Rotenboden winter sector", center:[45.992, 7.780], radius:2400}
+    ]
+  },
+  spring: {
+    title: "Spring in Zermatt",
+    summary: "Spring is a transition season. Snowmelt, wet avalanches, and thaw instability become more important as winter conditions begin to break down.",
+    tags: ["Wet avalanches", "Melt instability", "Transition", "Changing access"],
+    bullets: [
+      "This view focuses on instability during thaw rather than a single winter-only hazard.",
+      "Hazard zones expand around glacier and snow transition areas.",
+      "Spring is useful for showing that hazard patterns shift before summer hiking begins."
+    ],
+    color: getComputedStyle(document.documentElement).getPropertyValue('--spring').trim(),
+    zones: [
+      {name:"Gorner glacier transition zone", center:[45.984, 7.790], radius:3000},
+      {name:"Theodul glacier transition zone", center:[45.955, 7.713], radius:2700},
+      {name:"Upper Schwarzsee–Furgg sector", center:[45.965, 7.727], radius:2200}
+    ]
+  },
+  summer: {
+    title: "Summer in Zermatt",
+    summary: "Summer feels safer, but it reveals a different risk landscape: exposed trails, glacier edges, rockfall-prone slopes, and high-altitude weather.",
+    tags: ["Rockfall", "Glacier terrain", "Hiking exposure", "Altitude"],
+    bullets: [
+      "This view emphasizes hiking routes, alpine viewpoints, and glacier-adjacent terrain.",
+      "Hazard zones focus on exposed high-elevation recreation areas rather than snowpack alone.",
+      "Summer pairs especially well with your viewpoint tour."
+    ],
+    color: getComputedStyle(document.documentElement).getPropertyValue('--summer').trim(),
+    zones: [
+      {name:"Hörnli / Schwarzsee alpine approach", center:[45.977, 7.716], radius:2300},
+      {name:"Gornergrat–Riffelsee exposure zone", center:[45.991, 7.777], radius:2200},
+      {name:"Klein Matterhorn high-altitude terrain", center:[45.938, 7.725], radius:2200}
+    ]
+  },
+  autumn: {
+    title: "Autumn in Zermatt",
+    summary: "Autumn is quieter but less predictable. Freeze-thaw cycles, early snow, and shoulder-season exposure make the landscape unstable in a different way.",
+    tags: ["Freeze-thaw", "Early snow", "Shoulder season", "Uncertainty"],
+    bullets: [
+      "This view focuses on unpredictability rather than peak tourism activity.",
+      "Hazard zones suggest changing ground and weather conditions across exposed routes.",
+      "Autumn works well as the final contrast before returning to winter."
+    ],
+    color: getComputedStyle(document.documentElement).getPropertyValue('--autumn').trim(),
+    zones: [
+      {name:"Sunnegga–Blauherd shoulder-season sector", center:[46.028, 7.792], radius:2400},
+      {name:"Gornergrat freeze-thaw sector", center:[45.986, 7.784], radius:2100},
+      {name:"Glacier Paradise shoulder-season sector", center:[45.938, 7.725], radius:2000}
+    ]
+  }
+};
+
+const map = L.map('map', {zoomControl:true}).setView([46.01, 7.76], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const layerGroups = {
+  hazards: L.layerGroup().addTo(map),
+  trails: L.layerGroup().addTo(map),
+  lifts: L.layerGroup().addTo(map),
+  ski: L.layerGroup().addTo(map),
+  viewpoints: L.layerGroup().addTo(map)
+};
+
+const viewpoints = [
+  {name:"Bahnhofplatz", type:"Arrival viewpoint", coords:[46.0246, 7.7485], text:"Main station square in Zermatt. For many visitors, this is the first clear view of the Matterhorn."},
+  {name:"Sunnegga", type:"Mountain viewpoint", coords:[46.0248, 7.7821], text:"An elevated viewpoint above Zermatt reached by funicular. It quickly links the village to alpine terrain."},
+  {name:"Leisee", type:"Alpine lake", coords:[46.0240, 7.7848], text:"A small lake near Sunnegga known for calm reflections and family-friendly recreation."},
+  {name:"Blauherd", type:"Lift / trail gateway", coords:[46.0298, 7.8001], text:"A mid-mountain stop that connects visitors to higher alpine trails and viewpoints."},
+  {name:"Stellisee", type:"Reflection lake", coords:[46.0305, 7.7997], text:"One of the most iconic Matterhorn reflection viewpoints in the region."},
+  {name:"Gornergrat", type:"Panoramic ridge", coords:[45.9831, 7.7844], text:"A high-altitude ridge with wide views of the Matterhorn and surrounding glaciers."},
+  {name:"Riffelsee", type:"Reflection lake", coords:[45.9943, 7.7714], text:"A famous alpine lake near Gornergrat that frames the Matterhorn in still water."},
+  {name:"Matterhorn Glacier Paradise", type:"High-altitude station", coords:[45.9380, 7.7252], text:"One of Europe’s highest cable-car stations, with glacier and summit views."},
+  {name:"Rotenboden", type:"Rail stop / access point", coords:[45.9977, 7.7775], text:"A stop on the Gornergrat line that leads to nearby lakes and alpine viewpoints."}
+];
+
+viewpoints.forEach(v => {
+  L.circleMarker(v.coords, {
+    radius:6, color:"#111", fillColor:getComputedStyle(document.documentElement).getPropertyValue('--vp').trim(),
+    fillOpacity:.95, weight:1.5
+  }).bindPopup(`<b>${v.name}</b><br>${v.type}<br><span style="color:#c8d2dd">${v.text}</span>`).addTo(layerGroups.viewpoints);
+});
+
+const zermattMarker = L.marker([46.0207, 7.7491]).bindPopup("<b>Zermatt</b><br>Main village / StoryMap focus");
+zermattMarker.addTo(layerGroups.viewpoints);
+
+const bbox = [45.93, 7.69, 46.05, 7.83];
+const overpassQuery = `
+[out:json][timeout:30];
+(
+  way["highway"~"path|footway|track|steps"]["sac_scale"](${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]});
+  way["route"="hiking"](${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]});
+  way["aerialway"](${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]});
+  way["piste:type"](${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]});
+  node["tourism"~"alpine_hut|viewpoint"](${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]});
+);
+(._;>;);
+out body;
+`;
+
+async function loadOSM() {
+  try {
+    const resp = await fetch("https://overpass-api.de/api/interpreter", {
+      method:"POST",
+      headers:{"Content-Type":"text/plain;charset=UTF-8"},
+      body:overpassQuery
+    });
+    const data = await resp.json();
+    const geo = osmtogeojson(data);
+
+    geo.features.forEach(f => {
+      const p = f.properties || {};
+      const gj = L.geoJSON(f, {style: styleFeature(p), pointToLayer: pointFeature}).bindPopup(popupHTML(p));
+      if (p.aerialway) gj.addTo(layerGroups.lifts);
+      else if (p["piste:type"]) gj.addTo(layerGroups.ski);
+      else if ((p.route && p.route === "hiking") || (p.highway && ["path","footway","track","steps"].includes(p.highway))) gj.addTo(layerGroups.trails);
+      else if (p.tourism === "alpine_hut" || p.tourism === "viewpoint") gj.addTo(layerGroups.viewpoints);
+    });
+  } catch (err) {
+    const fallback = L.popup().setLatLng([46.0,7.76]).setContent(
+      "<b>OSM data could not load right now.</b><br>Host this file online and reload, or try again later."
+    );
+    fallback.openOn(map);
+    console.error(err);
+  }
+}
+
+function styleFeature(p) {
+  if (p.aerialway) return {color:getCSS('--lift'), weight:2.6, opacity:.9};
+  if (p["piste:type"]) return {color:getCSS('--ski'), weight:2.0, opacity:.9};
+  return {color:getCSS('--trail'), weight:2.0, opacity:.8};
+}
+function pointFeature(f, latlng) {
+  const p = f.properties || {};
+  const fill = (p.tourism === "viewpoint" || p.tourism === "alpine_hut") ? getCSS('--vp') : "#ffffff";
+  return L.circleMarker(latlng, {radius:4.8, color:"#111", fillColor:fill, fillOpacity:.95, weight:1});
+}
+function popupHTML(p) {
+  const name = p.name ? `<b>${p.name}</b><br>` : "";
+  const type = p.aerialway ? `Lift: ${p.aerialway}` :
+               p["piste:type"] ? `Piste: ${p["piste:type"]}` :
+               p.route ? `Route: ${p.route}` :
+               p.highway ? `Trail: ${p.highway}` :
+               p.tourism ? `Tourism: ${p.tourism}` : "Feature";
+  return `${name}${type}`;
+}
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+let currentSeason = "winter";
+function renderHazards(seasonKey){
+  currentSeason = seasonKey;
+  const s = seasons[seasonKey];
+  layerGroups.hazards.clearLayers();
+  document.getElementById("season-title").textContent = s.title;
+  document.getElementById("season-summary").textContent = s.summary;
+  document.getElementById("haz-color").style.background = s.color;
+
+  const tags = document.getElementById("season-tags");
+  tags.innerHTML = "";
+  s.tags.forEach(tag => {
+    const el = document.createElement("span");
+    el.className = `pill ${seasonKey}`;
+    el.textContent = tag;
+    tags.appendChild(el);
+  });
+
+  const bullets = document.getElementById("season-bullets");
+  bullets.innerHTML = "";
+  s.bullets.forEach(b => {
+    const li = document.createElement("li");
+    li.textContent = b;
+    bullets.appendChild(li);
+  });
+
+  const features = s.zones.map(z => turf.circle([z.center[1], z.center[0]], z.radius/1000, {units:"kilometers", properties:{name:z.name}}));
+  const fc = turf.featureCollection(features);
+
+  L.geoJSON(fc, {
+    style: { color: s.color, fillColor: s.color, fillOpacity: .18, weight: 2 },
+    onEachFeature: (feature, layer) => layer.bindPopup(`<b>${feature.properties.name}</b><br>${s.title} hazard emphasis`)
+  }).addTo(layerGroups.hazards);
+
+  map.flyTo([46.01, 7.76], 11, {duration:1});
+}
+
+document.querySelectorAll(".season-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".season-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderHazards(btn.dataset.season);
+  });
+});
+
+function setMode(mode){
+  document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  document.getElementById("season-card").style.display = mode === "seasonal" ? "block" : "none";
+  if (mode === "viewpoints") {
+    map.fitBounds(L.latLngBounds(viewpoints.map(v => v.coords)), {padding:[30,30]});
+    if (map.hasLayer(layerGroups.hazards)) map.removeLayer(layerGroups.hazards);
+    if (!map.hasLayer(layerGroups.viewpoints)) map.addLayer(layerGroups.viewpoints);
+  } else {
+    if (!map.hasLayer(layerGroups.hazards)) map.addLayer(layerGroups.hazards);
+    renderHazards(currentSeason);
+  }
+}
+document.querySelectorAll(".mode-btn").forEach(btn => {
+  btn.addEventListener("click", () => setMode(btn.dataset.mode));
+});
+
+document.querySelectorAll(".toggle-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const key = btn.dataset.layer;
+    const layer = layerGroups[key];
+    if (map.hasLayer(layer)) map.removeLayer(layer); else map.addLayer(layer);
+    btn.classList.toggle("active", map.hasLayer(layer));
+  });
+  btn.classList.add("active");
+});
+
+loadOSM();
+renderHazards("winter");
+</script>
+</body>
+</html>
